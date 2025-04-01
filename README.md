@@ -17,7 +17,7 @@ RTX4090 and got 2000fps out of it. Well, there is no way I can touch that, but I
 still couldn't stop thinking about it.
 
 Matt's Python code takes about 16 seconds to run on my machine. 
-<img src="screenshots/python.py" alt="Python Example, 16.31 seconds">
+<img src="screenshots/python.png" alt="Python Example, 16.31 seconds">
 I wrote some Python back in the day, and I recall the philosophy was to write
 everything you could in Python, dropping into C for the bits that had to be
 fast. I wondered how a simple interpreter written in C would do.
