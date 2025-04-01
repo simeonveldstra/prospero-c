@@ -2,11 +2,18 @@
 # Simeon Veldstra, 2025
 #
 
+SOURCES=machine.c
 
-all: machine
+CC=gcc
+CFLAGS=-Ofast -Wall
+LFLAGS=-lm
 
-machine: 
-	gcc machine.c -o machine -lm -Ofast -Wall 
+
+OBJSC=$(SOURCES:.c=.o)
+all: $(SOURCES) machine
+
+machine: $(OBJSC) 
+	gcc machine.c $(LFLAGS) $(CFLAGS) $(OBJS) -o machine  
 
 purge: clean
 	rm -f machine

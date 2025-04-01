@@ -24,14 +24,29 @@ printf("cpu time: %f\n", (end_time.tv_sec - start_time.tv_sec) + ((end_time.tv_n
 int main(int argc, char** argv) {
 	struct timespec start_time, end_time;
 	quadresult fourpix;
+	int opcount;
 
 	fp_type* space = linspace(IMAGE_SIZE);
 	START_TIMER
 	func sdf = parse_file(FILENAME);
 	PRINT_TIMER
+	
+	printf("Constant folding is %s, ", FOLD_CONST ? "enabled" : "disabled");
+	if (FOLD_CONST) {
+		START_TIMER
+		opcount = fold_const(&sdf);
+		printf("converted %d operations to const loads, ", opcount);
+		PRINT_TIMER
+
+	}
 
 	printf("Const instruction removal is %s, ", CUT_CONST ? "enabled" : "disabled");
-	printf("removed %d const instructions from program.\n", sdf.size - sdf.constfreesize);
+	if (CUT_CONST) {
+		START_TIMER
+		opcount = cut_const(&sdf);
+		printf("removed %d const instructions from program, ", opcount);
+		PRINT_TIMER
+	}
 
 	fp_type * scratch4;
 	fp_type * scratch;
@@ -44,12 +59,12 @@ int main(int argc, char** argv) {
 	}
 	scratch4 = (fp_type *) malloc(sizeof(fp_type) * sdf.size * 4 + (5 * sizeof(fp_type)));
 	scratch = (fp_type *) malloc(sizeof(fp_type) * sdf.size + (2 * sizeof(fp_type)));
-	scratch4[sdf.size * 4 + 4] = 0.0; // Be sure the sentinel value for cut const is not set.
-	scratch[sdf.size + 1] = 0.0;
-	if (!scratch) {
+	if (!(scratch && scratch4)) {
 		fprintf(stderr, "Memory allocation failed.\n");
 		exit(1);
 	}
+	scratch4[sdf.size * 4 + 4] = 0.0; // Be sure the sentinel value for cut const is not set.
+	scratch[sdf.size + 1] = 0.0;
 	
 	printf("Starting render... ");
 	START_TIMER
@@ -91,12 +106,12 @@ int main(int argc, char** argv) {
 func parse_file(const char* filename) {
 	func ret;
 	ret.size = 0;
+	ret.constfree = (operation *)0;
 	ret.constfreesize = 0;
 	int linecount = 0;
 	int c, ok;
 	char line[255];
 	operation * oper;
-	operation * constfree;
 	FILE* input = fopen(filename, "r");
 	if (!input) {
 		fprintf(stderr, "File opening failed\n");
@@ -114,31 +129,17 @@ func parse_file(const char* filename) {
 		fprintf(stderr, "Memory allocation failed.\n");
 		exit(1);
 	}
-	ret.constfree = (operation *) malloc(sizeof(operation) * (linecount + 1));
-	if (!ret.constfree) {
-		fprintf(stderr, "Memory allocation failed.\n");
-		exit(1);
-	}
 	oper = ret.func;
-	constfree = ret.constfree;
 
 	while (EOF != (fscanf(input, "%254[^\n]\n", line))) {
 		ok = parse_line(line, oper);
 		if (ok) {
-			if (oper->code != CONST) {
-				memcpy(constfree, oper, sizeof(operation));
-				constfree += 1;
-				ret.constfreesize += 1;
-			}
 			ret.size += ok;
 			oper += ok;
 		}
 	}
 
-	ret.constfree = (operation *) realloc(ret.constfree, sizeof(operation) * ret.constfreesize);
-
 	printf("instruction count: %d, ", ret.size);
-
 	return ret;
 }
 
@@ -430,3 +431,29 @@ fp_type* linspace(int size) {
 }
 
 
+/* Make a copy of the function with const operations removed. */
+int cut_const(func *sdf) {
+	sdf->constfree = (operation *) malloc(sizeof(operation) * (sdf->size + 1));
+	if (!sdf->constfree) {
+		fprintf(stderr, "Memory allocation failed.\n");
+		exit(1);
+	}
+
+	operation *output = sdf->constfree;
+	for (int i = 0; i < sdf->size; i++) {
+		if (sdf->func[i].code != CONST) {
+			memcpy(output, &sdf->func[i], sizeof(operation));
+			output += 1;
+			sdf->constfreesize += 1;
+
+		}
+	}
+
+	sdf->constfree = (operation *) realloc(sdf->constfree, sizeof(operation) * sdf->constfreesize);
+	return sdf->size - sdf->constfreesize;
+}
+
+int fold_const(func *sdf) {
+
+	return 0;
+}

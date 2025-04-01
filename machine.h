@@ -12,6 +12,8 @@
 #define FILENAME "prospero.vm"
 #define OUTFILE "out.ppm"
 
+// Fold operations with constants for operands
+#define FOLD_CONST 1
 
 // Only execute const loads on first run through scratch memory (0 to disable)
 #define CUT_CONST 1
@@ -62,4 +64,8 @@ int render_four_pixels(func sdf, fp_type* memory, fp_type x, fp_type y1, fp_type
 int write_ppm(const char * filename, char * data, int size);
 
 fp_type* linspace(int size);
+
+int cut_const(func * sdf);
+
+int fold_const(func * sdf);
 
