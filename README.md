@@ -82,6 +82,14 @@ track of intermediate values of all the pixels at once. That gets expensive.
 Worst of all, the Python program only runs in one thread, so there is no actual
 speed gain from organizing the problem that way. 
 
+Another difference is this program could be compiled and run on the 386DX I had
+in 1992, at least if you had the patience to wait for the FLOPs. With some
+performance stats from a random web page and a napkin, I figure you'd wait at
+least 16 hours -- if you had a 387 math coprocessor with an FPU. We didn't, so
+probably more like a week. I don't know how relevant that is to anything, but
+this program is a 22k binary that only needs libc. 
+
+#### Constant removal
 One consequence of using a block of scratch memory like this is after the first
 run through the interpreter, each subsequent run writes all the same constant values
 into the block, overwriting identical bits. That's a waste of time. I modified
