@@ -18,18 +18,18 @@
 
 #define START_TIMER clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start_time);
 #define PRINT_TIMER clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end_time); \
-printf("cpu time: %f\n", (end_time.tv_sec - start_time.tv_sec) + ((end_time.tv_nsec - start_time.tv_nsec) / 1000000000.0));
+printf("cpu time: %f", (end_time.tv_sec - start_time.tv_sec) + ((end_time.tv_nsec - start_time.tv_nsec) / 1000000000.0));
 
 /* Render the image. Options in machine.h */ 
 int main(int argc, char** argv) {
 	struct timespec start_time, end_time;
-	quadresult fourpix;
 	int opcount;
 
 	fp_type* space = linspace(IMAGE_SIZE);
 	START_TIMER
 	func sdf = parse_file(FILENAME);
 	PRINT_TIMER
+	printf("\n");
 	
 	printf("Constant folding is %s, ", FOLD_CONST ? "enabled" : "disabled");
 	if (FOLD_CONST) {
@@ -37,8 +37,8 @@ int main(int argc, char** argv) {
 		opcount = fold_const(&sdf);
 		printf("converted %d operations to const loads, ", opcount);
 		PRINT_TIMER
-
 	}
+	printf("\n");
 
 	printf("Const instruction removal is %s, ", CUT_CONST ? "enabled" : "disabled");
 	if (CUT_CONST) {
@@ -47,9 +47,8 @@ int main(int argc, char** argv) {
 		printf("removed %d const instructions from program, ", opcount);
 		PRINT_TIMER
 	}
+	printf("\n");
 
-	fp_type * scratch4;
-	fp_type * scratch;
 	int data_size = sizeof(char) * IMAGE_SIZE * IMAGE_SIZE;
 
 	char * data = (char *) malloc(data_size);
@@ -57,36 +56,15 @@ int main(int argc, char** argv) {
 		fprintf(stderr, "Memory allocation failed.\n");
 		exit(1);
 	}
-	scratch4 = (fp_type *) malloc(sizeof(fp_type) * sdf.size * 4 + (5 * sizeof(fp_type)));
-	scratch = (fp_type *) malloc(sizeof(fp_type) * sdf.size + (2 * sizeof(fp_type)));
-	if (!(scratch && scratch4)) {
-		fprintf(stderr, "Memory allocation failed.\n");
-		exit(1);
-	}
-	scratch4[sdf.size * 4 + 4] = 0.0; // Be sure the sentinel value for cut const is not set.
-	scratch[sdf.size + 1] = 0.0;
 	
 	printf("Starting render... ");
 	START_TIMER
-	for (int x=0; x < IMAGE_SIZE; x++) {
-		int y;
-		for (y=0; y + 4 <= IMAGE_SIZE; y += 4) {
-			render_four_pixels(sdf, scratch4, space[x], -space[y], -space[y+1], -space[y+2], -space[y+3], &fourpix);
-			data[(y+0)*IMAGE_SIZE+x] = (fourpix.one   < 0) ? 255 : 0;
-			data[(y+1)*IMAGE_SIZE+x] = (fourpix.two   < 0) ? 255 : 0;
-			data[(y+2)*IMAGE_SIZE+x] = (fourpix.three < 0) ? 255 : 0;
-			data[(y+3)*IMAGE_SIZE+x] = (fourpix.four  < 0) ? 255 : 0;
-		}
-		for (; y < IMAGE_SIZE; y++) {
-			data[y*IMAGE_SIZE+x] = (render_pixel(sdf, scratch, space[x], -space[y]) < 0) ? 255 : 0;
-		}
-	}
+	render_chunk(sdf, 0, IMAGE_SIZE, IMAGE_SIZE, data, space);
 	PRINT_TIMER
+	printf("\n");
 
 	write_ppm(OUTFILE, data, data_size);
 
-	free(scratch4);
-	free(scratch);
 	free(data);
 	free(space);
 	free(sdf.func);
@@ -245,6 +223,40 @@ int parse_line(const char* line, operation* op) {
 
 error:
 	fprintf(stderr, "Unable to parse line: %s\n", line);
+	return 0;
+}
+
+
+int render_chunk(func sdf, int startidx, int size, int stride, char *data, fp_type *space) {
+
+	quadresult fourpix;
+	fp_type * scratch4;
+	fp_type * scratch;
+	scratch4 = (fp_type *) malloc(sizeof(fp_type) * sdf.size * 4 + (5 * sizeof(fp_type)));
+	scratch = (fp_type *) malloc(sizeof(fp_type) * sdf.size + (2 * sizeof(fp_type)));
+	if (!(scratch && scratch4)) {
+		fprintf(stderr, "Memory allocation failed.\n");
+		exit(1);
+	}
+	scratch4[sdf.size * 4 + 4] = 0.0; // Be sure the sentinel value for cut const is not set.
+	scratch[sdf.size + 1] = 0.0;
+
+	for (int x=startidx; x < (startidx + size); x++) {
+		int y;
+		for (y=0; y + 4 <= stride; y += 4) {
+			render_four_pixels(sdf, scratch4, space[x], -space[y], -space[y+1], -space[y+2], -space[y+3], &fourpix);
+			data[(y+0)*stride+x] = (fourpix.one   < 0) ? 255 : 0;
+			data[(y+1)*stride+x] = (fourpix.two   < 0) ? 255 : 0;
+			data[(y+2)*stride+x] = (fourpix.three < 0) ? 255 : 0;
+			data[(y+3)*stride+x] = (fourpix.four  < 0) ? 255 : 0;
+		}
+		for (; y < stride; y++) {
+			data[y*stride+x] = (render_pixel(sdf, scratch, space[x], -space[y]) < 0) ? 255 : 0;
+		}
+	}
+
+	free(scratch4);
+	free(scratch);
 	return 0;
 }
 
@@ -453,7 +465,123 @@ int cut_const(func *sdf) {
 	return sdf->size - sdf->constfreesize;
 }
 
-int fold_const(func *sdf) {
 
+/* fold constants in one operator and its operand(s) recursively. */
+int fold_const_operator(func *sdf, operation *oper) {
+	int count = 0;
+	int a, b;
+	operation *func = sdf->func;
+
+	switch (oper->code) {
+		case VAR_X:
+		case VAR_Y:
+		case CONST:
+			return count;
+		case NEG:
+			a = oper->a;
+			count += fold_const_operator(sdf, func+a);
+			if (sdf->func[a].code == CONST) {
+				printf("found NEG\t");
+				oper->code = CONST;
+				oper->value = -(func[a].value);
+				return count + 1;
+			}
+			return count;
+		case SQUARE:
+			a = oper->a;
+			count += fold_const_operator(sdf, func+a);
+			if (sdf->func[a].code == CONST) {
+				printf("found SQUARE\t");
+				oper->code = CONST;
+				oper->value = sdf->func[a].value * sdf->func[a].value;
+				return count + 1;
+			}
+			return count;
+		case SQRT:
+			a = oper->a;
+			count += fold_const_operator(sdf, func+a);
+			if ((func+a)->code == CONST) {
+				printf("found SQRT\t");
+				oper->code = CONST;
+				oper->value = sqrt_fp(sdf->func[a].value);
+				return count + 1;
+			}
+			return count;
+		case ADD:
+			a = oper->a;
+			b = oper->b;
+			count += fold_const_operator(sdf, &sdf->func[a]);
+			count += fold_const_operator(sdf, &sdf->func[b]);
+			printf("ADD: %d,%d\n", (func+a)->code, sdf->func[b].code);
+			if ((sdf->func[a].code == CONST) && (sdf->func[b].code == CONST))  {
+				printf("found ADD\t");
+				oper->code = CONST;
+				oper->value = sdf->func[a].value + sdf->func[b].value;
+				return count + 1;
+			}
+			return count;
+		case SUB:
+			a = oper->a;
+			b = oper->b;
+			count += fold_const_operator(sdf, &sdf->func[a]);
+			count += fold_const_operator(sdf, &sdf->func[b]);
+			if ((sdf->func[a].code == CONST) && (sdf->func[b].code == CONST))  {
+				printf("found SUB\t");
+				oper->code = CONST;
+				oper->value = sdf->func[a].value - sdf->func[b].value;
+				return count + 1;
+			}
+			return count;
+		case MUL:
+			a = oper->a;
+			b = oper->b;
+			count += fold_const_operator(sdf, &sdf->func[a]);
+			count += fold_const_operator(sdf, &sdf->func[b]);
+			if ((sdf->func[a].code == CONST) && (sdf->func[b].code == CONST))  {
+				printf("found MUL\t");
+				oper->code = CONST;
+				oper->value = sdf->func[a].value * sdf->func[b].value;
+				return count + 1;
+			}
+			return count;
+		case MAX:
+			a = oper->a;
+			b = oper->b;
+			count += fold_const_operator(sdf, &sdf->func[a]);
+			count += fold_const_operator(sdf, &sdf->func[b]);
+			if ((sdf->func[a].code == CONST) && (sdf->func[b].code == CONST))  {
+				printf("found MAX\t");
+				oper->code = CONST;
+				oper->value = fmax_fp(sdf->func[a].value, sdf->func[b].value);
+				return count + 1;
+			}
+			return count;
+		case MIN:
+			a = oper->a;
+			b = oper->b;
+			count += fold_const_operator(sdf, &sdf->func[a]);
+			count += fold_const_operator(sdf, &sdf->func[b]);
+			if ((sdf->func[a].code == CONST) && (sdf->func[b].code == CONST))  {
+				printf("found MIN\t");
+				oper->code = CONST;
+				oper->value = fmin_fp(sdf->func[a].value, sdf->func[b].value);
+				return count + 1;
+			}
+			return count;
+	}
+	fprintf(stderr, "Found bad opcode %d in constant folder\n", oper->code);
 	return 0;
 }
+
+
+/* Fold constants. Modifies the funtion in-place by converting operations where all operands are 
+ * constants into constants. */
+int fold_const(func *sdf) {
+	int count = 0;
+	for (int i = 0; i < sdf->size; i++) {
+		count += fold_const_operator(sdf, sdf->func + i);
+	}
+	return count;
+}
+
+
