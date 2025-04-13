@@ -8,7 +8,7 @@
  *
  */
 
-#define IMAGE_SIZE 1024
+#define IMAGE_SIZE 4096
 #define FILENAME "prospero.vm"
 #define OUTFILE "out.ppm"
 
@@ -17,6 +17,9 @@
 
 // Only execute const loads on first run through scratch memory (0 to disable)
 #define CUT_CONST 1
+
+// Number of threads to spawn, 0 for single-threaded.
+#define NUM_THREADS 25
 
 // Use double precision floating point
 #define DOUBLE
@@ -50,6 +53,17 @@ typedef struct {
 } func;
 
 typedef struct {
+	func *sdf;
+	int startidx;
+	int size;
+	int stride;
+	char *data;
+	fp_type *space;
+} chunk_args;
+
+void * start_thread(void * args);
+
+typedef struct {
 	fp_type one, two, three, four;
 } quadresult;
 
@@ -57,11 +71,11 @@ int parse_line(const char* line, operation* op);
 
 func parse_file(const char* filename);
 
-int render_chunk(func sdf, int startidx, int size, int stride, char *data, fp_type *space);
+int render_chunk(func *sdf, int startidx, int size, int stride, char *data, fp_type *space);
 
-fp_type render_pixel(func sdf, fp_type* memory, fp_type x, fp_type y);
+fp_type render_pixel(func *sdf, fp_type* memory, fp_type x, fp_type y);
 
-int render_four_pixels(func sdf, fp_type* memory, fp_type x, fp_type y1, fp_type y2, fp_type y3, fp_type y4, quadresult * out);
+int render_four_pixels(func *sdf, fp_type* memory, fp_type x, fp_type y1, fp_type y2, fp_type y3, fp_type y4, quadresult * out);
 
 int write_ppm(const char * filename, char * data, int size);
 

@@ -100,8 +100,29 @@ memory block once with the full function to populate the values..
 This saves ~1.4 billion redundant memory stores for a 1024
 sized image, and runs about 8% faster, around 13 seconds here. 
 
-I have enough cores I should be able to split the work and get it done in under
-a second, but I want to experiment with some optimizations first, starting with
-const-folding.
 
-I'm up past my bedtime again, so that's enough for now.
+#### Parallelization
+
+The basic Python/numpy implementation uses only one processor core on my
+machine. Python is famous for the global interpreter lock, which makes
+concurrency hard. It's not 2003 anymore, I'm a bit surprised that numpy hasn't
+overcome this, but htop does show only one core active.  
+
+I have enough cores I should be able to split the work up and get it done in under
+a second. Let's abandon portability and include pthread.h and see where that
+gets us..
+
+One nice thing about Python is never seeing the words "segmentation fault".
+Eventually I figured out that I duplicated some pointer math when refactoring a
+bit for threads. Anyway, other than that, harnessing some more cores was pretty
+easy. To get the wall clock time down under a second took 25 threads on my
+machine. 
+<img src="screenshots/machine-under-a-second.png" alt="Threaded and under a second">
+You can see the overhead has gone up a fair bit, from 13 to 22 seconds of
+processor time, and the memory usage has ballooned to almost eight megabytes!
+
+The returns diminish however, with only 4 threads wall-clock was down to about
+three seconds. 
+
+So there you have it, you really can beat Python by rewriting in C. 
+And it only took 700 extra lines of code. 

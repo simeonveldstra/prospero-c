@@ -15,6 +15,7 @@
 #include <string.h>
 #include <math.h> 
 #include <time.h>
+#include <pthread.h>
 
 #define START_TIMER clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start_time);
 #define PRINT_TIMER clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end_time); \
@@ -57,11 +58,54 @@ int main(int argc, char** argv) {
 		exit(1);
 	}
 	
+	int num_threads = NUM_THREADS;
 	printf("Starting render... ");
-	START_TIMER
-	render_chunk(sdf, 0, IMAGE_SIZE, IMAGE_SIZE, data, space);
-	PRINT_TIMER
+	if (num_threads) printf("spawning %d threads. ", num_threads);
 	printf("\n");
+
+	START_TIMER
+	if (num_threads) {
+		pthread_t threads[num_threads];
+		chunk_args args[num_threads];
+		int chunk_size = (data_size / num_threads);  
+		int i = 0;
+
+		for (i=0; i < (num_threads - 1); i++) { 
+			args[i].sdf = &sdf;
+			args[i].startidx = chunk_size * i;
+			args[i].size = chunk_size;
+			args[i].stride = IMAGE_SIZE;
+			args[i].data = data;
+			args[i].space = space;
+			if (pthread_create(&threads[i], NULL, start_thread, &args[i])) {
+				fprintf(stderr, "Problem creating thread\n");
+				exit(1);
+			}
+		}
+		args[i].sdf = &sdf;
+		args[i].startidx = (num_threads - 1) * chunk_size;
+		args[i].size = data_size - args[i].startidx;
+		args[i].stride = IMAGE_SIZE;
+		args[i].data = data;
+		args[i].space = space;
+		if (pthread_create(&threads[i], NULL, start_thread, &args[i])) {
+			fprintf(stderr, "Problem creating last thread\n");
+			exit(1);
+		}
+
+		// Wait
+		for (i=0; i < num_threads; i++) {
+			if (pthread_join(threads[i], NULL)) {
+				fprintf(stderr, "Problem joining threads\n");
+				exit(1);
+			}
+		}
+
+	} else {
+		render_chunk(&sdf, 0, data_size, IMAGE_SIZE, data, space);
+	}
+	PRINT_TIMER
+	printf("\n ");
 
 	write_ppm(OUTFILE, data, data_size);
 
@@ -227,28 +271,37 @@ error:
 }
 
 
-int render_chunk(func sdf, int startidx, int size, int stride, char *data, fp_type *space) {
+void *start_thread(void * args_in) {
+	chunk_args * args = (chunk_args *)args_in;
+	render_chunk(args->sdf, args->startidx, args->size, args->stride, args->data, args->space);
+	return (void *)0;
+}
+
+
+int render_chunk(func *sdf, int startidx, int size, int stride, char *data, fp_type *space) {
 
 	quadresult fourpix;
 	fp_type * scratch4;
 	fp_type * scratch;
-	scratch4 = (fp_type *) malloc(sizeof(fp_type) * sdf.size * 4 + (5 * sizeof(fp_type)));
-	scratch = (fp_type *) malloc(sizeof(fp_type) * sdf.size + (2 * sizeof(fp_type)));
+	scratch4 = (fp_type *) malloc(sizeof(fp_type) * sdf->size * 4 + (5 * sizeof(fp_type)));
+	scratch = (fp_type *) malloc(sizeof(fp_type) * sdf->size + (2 * sizeof(fp_type)));
 	if (!(scratch && scratch4)) {
 		fprintf(stderr, "Memory allocation failed.\n");
 		exit(1);
 	}
-	scratch4[sdf.size * 4 + 4] = 0.0; // Be sure the sentinel value for cut const is not set.
-	scratch[sdf.size + 1] = 0.0;
+	scratch4[sdf->size * 4 + 4] = 0.0; // Be sure the sentinel value for cut const is not set.
+	scratch[sdf->size + 1] = 0.0;
 
-	for (int x=startidx; x < (startidx + size); x++) {
+	int xstart = startidx / stride;
+	int xfin = xstart + (size / stride);
+	for (int x=xstart; x <= xfin; x++) {
 		int y;
 		for (y=0; y + 4 <= stride; y += 4) {
 			render_four_pixels(sdf, scratch4, space[x], -space[y], -space[y+1], -space[y+2], -space[y+3], &fourpix);
-			data[(y+0)*stride+x] = (fourpix.one   < 0) ? 255 : 0;
-			data[(y+1)*stride+x] = (fourpix.two   < 0) ? 255 : 0;
-			data[(y+2)*stride+x] = (fourpix.three < 0) ? 255 : 0;
-			data[(y+3)*stride+x] = (fourpix.four  < 0) ? 255 : 0;
+			data[(y+0)*stride+(x)] = (fourpix.one   < 0) ? 255 : 0;
+			data[(y+1)*stride+(x)] = (fourpix.two   < 0) ? 255 : 0;
+			data[(y+2)*stride+(x)] = (fourpix.three < 0) ? 255 : 0;
+			data[(y+3)*stride+(x)] = (fourpix.four  < 0) ? 255 : 0;
 		}
 		for (; y < stride; y++) {
 			data[y*stride+x] = (render_pixel(sdf, scratch, space[x], -space[y]) < 0) ? 255 : 0;
@@ -268,17 +321,17 @@ int render_chunk(func sdf, int startidx, int size, int stride, char *data, fp_ty
  * we know we will need no more than one cell per instruction. We do the simplest thing, 
  * and allocate a scratch space that size.
  * Registers for everyone!
-   */
-fp_type render_pixel(func sdf, fp_type* memory, fp_type x, fp_type y) {
-	operation* function = sdf.func; 
-	operation* funcbase = sdf.func;
-	int size = sdf.size;
+ */
+fp_type render_pixel(func *sdf, fp_type* memory, fp_type x, fp_type y) {
+	operation* function = sdf->func; 
+	operation* funcbase = sdf->func;
+	int size = sdf->size;
 	fp_type out;
 
 	// Only execute the const instructions on the first time through the block of memory. 
-	if ((memory[sdf.size + 1] == BEEN_INITIALIZED) && CUT_CONST) {
-		funcbase = sdf.constfree;
-		size = sdf.constfreesize;
+	if ((memory[sdf->size + 1] == BEEN_INITIALIZED) && CUT_CONST) {
+		funcbase = sdf->constfree;
+		size = sdf->constfreesize;
 	}
 
 	for (int i=0; i < size; i++) {
@@ -320,21 +373,21 @@ fp_type render_pixel(func sdf, fp_type* memory, fp_type x, fp_type y) {
 		}
 	}
 	out = memory[function->line];
-	memory[sdf.size + 1] = BEEN_INITIALIZED;
+	memory[sdf->size + 1] = BEEN_INITIALIZED;
 	return out;
 }
 
 /* Process four pixels at once while chanting rhythmically in an interleaved scratch space in an attempt to summon the SIMDemon. 
  * Don't forget to sacrifice four times the customary memory for intermediates. */
-int render_four_pixels(func sdf, fp_type* memory, fp_type x, fp_type y1, fp_type y2, fp_type y3, fp_type y4, quadresult * out) {
-	operation* function = sdf.func; 
-	operation* funcbase = sdf.func;
-	int size = sdf.size;
+int render_four_pixels(func *sdf, fp_type* memory, fp_type x, fp_type y1, fp_type y2, fp_type y3, fp_type y4, quadresult * out) {
+	operation* function = sdf->func; 
+	operation* funcbase = sdf->func;
+	int size = sdf->size;
 
 	// Only execute the const instructions on the first time through. 
-	if ((memory[sdf.size * 4 + 4] == BEEN_INITIALIZED) && CUT_CONST)  {
-		funcbase = sdf.constfree;
-		size = sdf.constfreesize;
+	if ((memory[sdf->size * 4 + 4] == BEEN_INITIALIZED) && CUT_CONST)  {
+		funcbase = sdf->constfree;
+		size = sdf->constfreesize;
 	} 
 	for (int i=0; i < size; i++) {
 		function = funcbase +i;
@@ -411,7 +464,7 @@ int render_four_pixels(func sdf, fp_type* memory, fp_type x, fp_type y1, fp_type
 	out->two   = memory[(function->line * 4) + 1];
 	out->three = memory[(function->line * 4) + 2];
 	out->four  = memory[(function->line * 4) + 3];
-	memory[(sdf.size * 4) + 4] = BEEN_INITIALIZED; 
+	memory[(sdf->size * 4) + 4] = BEEN_INITIALIZED; 
 	return 0;
 }
 
