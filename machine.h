@@ -8,7 +8,7 @@
  *
  */
 
-#define IMAGE_SIZE 4096
+#define IMAGE_SIZE 1024
 #define FILENAME "prospero.vm"
 #define OUTFILE "out.ppm"
 
@@ -19,7 +19,7 @@
 #define CUT_CONST 1
 
 // Number of threads to spawn, 0 for single-threaded.
-#define NUM_THREADS 25
+#define NUM_THREADS 8
 
 // Use double precision floating point
 #define DOUBLE

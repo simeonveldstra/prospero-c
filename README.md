@@ -6,8 +6,8 @@ Matt Keeter posted the [Prospero Challenge](https://www.mattkeeter.com/projects/
 earlier this month. 
 
 The challenge is to build a renderer for an image created from a signed
-distance function, as quickly as possible. Matt provided a simple 28 line
-renderer in Python that uses numpy. 
+distance function, that renders as quickly as possible. Matt provided a simple
+28 line renderer in Python that uses numpy. 
 
 The explanation was a bit terse, but between the numpy docs, and some HN
 [comments](https://news.ycombinator.com/item?id=43465490), I got the picture.
@@ -56,7 +56,7 @@ up correctly, perform the float ops four at a time and say nothing at all to the
 compiler about it, just give it -O3 or -Ofast and let it think that it thought
 of this great optimization opportunity all on its own. Worked like a charm:
 <img src="screenshots/machine-dominates-python-with-SIMD.png" alt="With SIMD, 14.12 seconds">
-It's close to the numpy result, 15% faster. 
+It's pretty close to the numpy result, 15% faster. 
 
 So there you have it, you can replace the important bits with C and still
 realize a speedup over Python. Is all that code (and a buffer overflow
@@ -65,7 +65,7 @@ vulnerability or two, surely) really worth it for a mere 15% speedup?
 On the other hand, observant readers may have noticed another difference in
 performance. The Python solution uses fifty-and-a-half gigabytes of RAM to
 calculate the result. The SIMD enabled C program uses just 2.5 megabytes. That's
-20,000x less memory. One of those megabytes is the output buffer. 
+20,000x less memory, and one of those megabytes is the output buffer. 
 
 There is no huge trick here. The language describing the SDF has no control
 flow, and is in Single Static Assignment form. Essentially, every instruction
@@ -82,20 +82,21 @@ track of intermediate values of all the pixels at once. That gets expensive.
 Worst of all, the Python program only runs in one thread, so there is no actual
 speed gain from organizing the problem that way. 
 
-Another difference is this program could be compiled and run on the 386DX I had
-in 1992, at least if you had the patience to wait for the FLOPs. With some
-performance stats from a random web page and a napkin, I figure you'd wait at
-least 16 hours -- if you had a 387 math coprocessor with an FPU. We didn't, so
-probably more like a week. I don't know how relevant that is to anything, but
-this program is a 22k binary that only needs libc. 
+Another difference is that this C program could be compiled and run on the
+386DX I had in 1992, at least if you had the patience to wait for the FLOPs.
+With some performance stats from a random web page and a napkin, I figure you'd
+wait at least 16 hours -- if you had a 387 math coprocessor with an FPU. We
+didn't, so probably more like a week. I don't know how relevant that is to
+anything, but this program is a 22k binary that only needs libc to run and that 
+feels like a win to me.
 
 #### Constant removal
-One consequence of using a block of scratch memory like this is after the first
+One consequence of reusing a block of scratch memory like this is that after the first
 run through the interpreter, each subsequent run writes all the same constant values
 into the block, overwriting identical bits. That's a waste of time. I modified
-the parser to emit two instruction lists, one with all const instructions
+the parser to emit two instruction lists, one with all of the const instructions
 removed. The interpreter switches to the const-free function after using a
-memory block once with the full function to populate the values.. 
+fresh memory block for the first time. 
 <img src="screenshots/machine-skip-const.png" alt="With const instructions removed, 12.89 seconds">
 This saves ~1.4 billion redundant memory stores for a 1024
 sized image, and runs about 8% faster, around 13 seconds here. 
@@ -109,20 +110,23 @@ concurrency hard. It's not 2003 anymore, I'm a bit surprised that numpy hasn't
 overcome this, but htop does show only one core active.  
 
 I have enough cores I should be able to split the work up and get it done in under
-a second. Let's abandon portability and include pthread.h and see where that
-gets us..
+a second. Let's abandon the 386 and include pthread.h and see where that
+gets us.
 
 One nice thing about Python is never seeing the words "segmentation fault".
 Eventually I figured out that I duplicated some pointer math when refactoring a
 bit for threads. Anyway, other than that, harnessing some more cores was pretty
-easy. To get the wall clock time down under a second took 25 threads on my
+easy. 
+
+To get the wall clock time down under a second took 25 threads on my
 machine. 
 <img src="screenshots/machine-under-a-second.png" alt="Threaded and under a second">
-You can see the overhead has gone up a fair bit, from 13 to 22 seconds of
-processor time, and the memory usage has ballooned to almost eight megabytes!
-
 The returns diminish however, with only 4 threads wall-clock was down to about
 three seconds. 
+
+You can also see that the overhead has gone up a fair bit, from 13 to 22
+seconds of processor time, and the memory usage has ballooned to almost eight
+megabytes!
 
 So there you have it, you really can beat Python by rewriting in C. 
 And it only took 700 extra lines of code. 
