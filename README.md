@@ -58,7 +58,7 @@ of this great optimization opportunity all on its own. Worked like a charm:
 <img src="screenshots/machine-dominates-python-with-SIMD.png" alt="With SIMD, 14.12 seconds">
 It's pretty close to the numpy result, 15% faster. 
 
-So there you have it, you can replace the important bits with C and still
+It's true then, you can replace the important bits with C and still
 realize a speedup over Python. Is all that code (and a buffer overflow
 vulnerability or two, surely) really worth it for a mere 15% speedup? 
 
